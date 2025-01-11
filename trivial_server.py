@@ -9,12 +9,16 @@ import preguntas
 # Variables globales
 MAX_JUGADORES = 2
 NUM_PREGUNTAS = 5
-DESCANSO_POR_PREGUNTA = 2
+HISTORIAL_PARTIDAS = "historial_partidas.csv"
 
 usuarios_registrados = usuarios.cargar_usuarios()
 preguntas_quizz = preguntas.cargar_preguntas()
 clientes_conectados = []
-preguntas_partida = preguntas.seleccionar_preguntas(preguntas_quizz,NUM_PREGUNTAS)
+preguntas_partida = preguntas.seleccionar_preguntas(preguntas_quizz, NUM_PREGUNTAS)
+
+# Contador global para conocer cuantos jugadores han respondido a la preugnta 
+contador_respuestas = 0
+lock_respuestas = threading.Lock()
 
 # Evento global para sincronizar el inicio del juego
 evento_inicio = threading.Event()
@@ -24,6 +28,9 @@ evento_pregunta = threading.Event()
 
 # Evento global para el envío de ranking y mensajes personalizados
 evento_ranking = threading.Event()
+
+# Evento para sincronizar las respuestas
+evento_todos_respondieron = threading.Event()
 
 # Inicio del servidor
 def iniciar_servidor():
@@ -79,7 +86,7 @@ def enviar_ranking(clientes_conectados):
 
 # Manejo de clientes
 def manejar_cliente(cliente_socket, direccion):
-    global clientes_conectados
+    global clientes_conectados, contador_respuestas # Hacer saber al método que dichas variables son globales
 
     if len(clientes_conectados) >= MAX_JUGADORES:
         cliente_socket.sendall((Fore.RED + "Servidor lleno. No se permiten mas conexiones en esta partida.\n" + Style.RESET_ALL).encode('utf-8'))
@@ -131,15 +138,12 @@ def manejar_cliente(cliente_socket, direccion):
 
     # Bucle para todas las preguntas
     for pregunta in preguntas_partida:
-
-        # Imprimir solo una vez
+        
+        # Imprime la ronda por la que van
         if cliente_socket == clientes_conectados[0]["socket"]:
             sys.stdout.write("\r" + " " * 30 + "\r")  # Limpia la línea
             sys.stdout.flush()
             print(f"Los jugadores van por la ronda {ronda_preguntas}/{NUM_PREGUNTAS}")
-
-        # Guardar el estado inicial de los puntos
-        puntos_iniciales = {c["nick"]: c["puntos"] for c in clientes_conectados}
 
         # Hacer presente en la terminal del cliente su nickname
         cliente_socket.sendall(
@@ -158,36 +162,41 @@ def manejar_cliente(cliente_socket, direccion):
         cliente_socket.sendall(b"Seleccione una opcion: ")
 
         respuesta = cliente_socket.recv(1024).decode("utf-8").strip()
-
+        
         # Procesar respuesta
         for cliente in clientes_conectados:
             if cliente["socket"] == cliente_socket:
-
-                if respuesta.isdigit() and 1 <= int(respuesta) <= len(pregunta['opciones']):
-                    if pregunta['opciones'][int(respuesta) - 1] == pregunta['respuesta']:
-                        cliente_socket.sendall((Fore.GREEN + "Correcto!\n" + Style.RESET_ALL).encode('utf-8'))
-                        cliente["puntos"] += 1
+                with lock_respuestas:
+                    if respuesta.isdigit() and 1 <= int(respuesta) <= len(pregunta['opciones']):
+                        if pregunta['opciones'][int(respuesta) - 1] == pregunta['respuesta']:
+                            cliente_socket.sendall((Fore.GREEN + "Correcto!\n" + Style.RESET_ALL).encode('utf-8'))
+                            cliente["puntos"] += 1
+                        else:
+                            cliente_socket.sendall((Fore.RED + "Incorrecto!\n" + Style.RESET_ALL).encode('utf-8'))
                     else:
-                        cliente_socket.sendall((Fore.RED + "Incorrecto!\n" + Style.RESET_ALL).encode('utf-8'))
-                else:
-                    cliente_socket.sendall((Fore.RED + "Opcion no valida.\n" + Style.RESET_ALL).encode('utf-8'))
+                        cliente_socket.sendall((Fore.RED + "Opcion no valida.\n" + Style.RESET_ALL).encode('utf-8'))
                     
+                    # Marcamos que el jugador respondió
+                    contador_respuestas += 1
+                    #print(f"{cliente['nick']} ha respondido. Total respuestas: {contador_respuestas}")
+                    if contador_respuestas == MAX_JUGADORES:
+                        #print("Todos los jugadores han respondido. Continuando a la siguiente pregunta.")
+                        evento_todos_respondieron.set()
+                        
                 break
 
         cliente_socket.sendall(b"Esperando la siguiente pregunta...\n")
 
-        # Verificar si todos los jugadores han respondido
-        while True:
-            if all(c["puntos"] != puntos_iniciales[c["nick"]] for c in clientes_conectados): break
+        # Esperamos a que todos respondan
+        evento_todos_respondieron.wait()
+        
+        if(cliente_socket == clientes_conectados[0]["socket"]):
+            with lock_respuestas:
+                #print("Todos los jugadores respondieron, reiniciando contador...")
+                contador_respuestas = 0
+                evento_todos_respondieron.clear()
 
         ronda_preguntas += 1
-
-        # Verificar si el cliente se ha desconectado
-        if cliente_socket.fileno() == -1:
-            clientes_conectados = [c for c in clientes_conectados if c["socket"].fileno() != -1]
-            break
-        
-        time.sleep(DESCANSO_POR_PREGUNTA)
 
     # Finalizar la partida
     cliente_socket.sendall(b"Partida finalizada.\n")
