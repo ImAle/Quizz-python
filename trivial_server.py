@@ -2,6 +2,8 @@ import socket
 import threading
 import time
 import sys
+import csv
+from datetime import datetime
 from colorama import Fore, Style
 import usuarios
 import preguntas
@@ -56,6 +58,31 @@ def mostrar_estado_conexiones():
             print(f"Cliente conectado desde {cliente['direccion']} ({cliente['nick']})")
         else:
             print(f"Cliente conectado desde {cliente['direccion']}, esperando nickname...")
+            
+
+# Guardar historial de partidas
+def guardar_historial():
+    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    jugadores = [cliente["nick"] for cliente in clientes_conectados]
+    puntos = [cliente["puntos"] for cliente in clientes_conectados]
+    
+    with open(HISTORIAL_PARTIDAS, mode='a', newline='') as archivo:
+        escritor = csv.writer(archivo)
+        escritor.writerow([fecha_actual, jugadores, puntos])
+
+# Mostrar historial de partidas
+def mostrar_historial():
+    try:
+        with open(HISTORIAL_PARTIDAS, mode='r') as archivo:
+            lector = csv.reader(archivo)
+            next(lector) # Salta la primera linea
+            historial = list(lector)
+            historial.sort(reverse=True)
+            print("\nHistorial de Partidas:")
+            for registro in historial:
+                print(f"Fecha: {registro[0]} | Jugadores: {registro[1]} | Puntos: {registro[2]}")
+    except FileNotFoundError:
+        print("No hay historial de partidas registrado.")
 
 
 # Hace el ranking y lo envía
@@ -178,9 +205,9 @@ def manejar_cliente(cliente_socket, direccion):
                     
                     # Marcamos que el jugador respondió
                     contador_respuestas += 1
-                    #print(f"{cliente['nick']} ha respondido. Total respuestas: {contador_respuestas}")
+                    print(f"{cliente['nick']} ha respondido. Total respuestas: {contador_respuestas}")
                     if contador_respuestas == MAX_JUGADORES:
-                        #print("Todos los jugadores han respondido. Continuando a la siguiente pregunta.")
+                        print("Todos los jugadores han respondido. Continuando a la siguiente pregunta.")
                         evento_todos_respondieron.set()
                         
                 break
@@ -192,7 +219,7 @@ def manejar_cliente(cliente_socket, direccion):
         
         if(cliente_socket == clientes_conectados[0]["socket"]):
             with lock_respuestas:
-                #print("Todos los jugadores respondieron, reiniciando contador...")
+                print("Reiniciando contador...")
                 contador_respuestas = 0
                 evento_todos_respondieron.clear()
 
@@ -204,6 +231,8 @@ def manejar_cliente(cliente_socket, direccion):
     # Solo el primer cliente conectado ejecuta el ranking
     if cliente_socket == clientes_conectados[0]["socket"]:
         enviar_ranking(clientes_conectados)
+        guardar_historial()
+        mostrar_historial()
         evento_ranking.set()  # Activa el evento para informar a otros clientes
 
     # Espera hasta que el evento de ranking se complete
@@ -213,5 +242,3 @@ def manejar_cliente(cliente_socket, direccion):
 
 if __name__ == "__main__":
     iniciar_servidor()
-
-# El servidor debe guardar un historico de partidas
