@@ -92,24 +92,36 @@ def enviar_ranking(clientes_conectados):
 
     # Formatear el ranking con el puntaje entre paréntesis
     puntajes = "\n".join([f"{i+1}. {c['nick']} -> ({c['puntos']} puntos)" for i, c in enumerate(clientes_conectados)])
-
-    # Mostrar el ranking completo en el servidor
     print(f"Ranking final:\n{puntajes}")
 
     # Enviar el ranking a todos los clientes
     for cliente in clientes_conectados:
         cliente["socket"].sendall(f"\nRanking final:\n{puntajes}\n".encode("utf-8"))
 
-    # Enviar mensajes personalizados a los jugadores
-    for cliente in clientes_conectados:
-        if cliente["puntos"] == clientes_conectados[0]["puntos"]:
-            mensaje = "Enhorabuena! Has ganado el quizz"
-        else:
-            puesto = clientes_conectados.index(cliente) + 1
-            mensaje = f"Enhorabuena! Has quedado en el puesto {puesto}"
+    # Calcular posiciones teniendo en cuenta empates
+    posiciones = {}
+    puesto_actual = 1
 
-        # Mensaje personalizado
+    for i, cliente in enumerate(clientes_conectados):
+        puntos = cliente["puntos"]
+        if puntos not in posiciones:
+            posiciones[puntos] = puesto_actual
+        puesto_actual += 1
+
+    # Enviar mensajes personalizados
+    for cliente in clientes_conectados:
+        puesto = posiciones[cliente["puntos"]]
+        jugadores_mismo_puesto = [c for c in clientes_conectados if c["puntos"] == cliente["puntos"]]
+
+        if len(jugadores_mismo_puesto) > 1:
+            mensaje = f"Empate! Compartes el puesto {puesto}"
+        elif puesto == 1:
+            mensaje = "¡Enhorabuena! Has ganado el quizz"
+        else:
+            mensaje = f"¡Enhorabuena! Has quedado en el puesto {puesto}"
+
         cliente["socket"].sendall(f"{mensaje}\n".encode("utf-8"))
+
 
 # Manejo de clientes
 def manejar_cliente(cliente_socket, direccion):
@@ -207,7 +219,7 @@ def manejar_cliente(cliente_socket, direccion):
                     contador_respuestas += 1
                     print(f"{cliente['nick']} ha respondido. Total respuestas: {contador_respuestas}")
                     if contador_respuestas == MAX_JUGADORES:
-                        print("Todos los jugadores han respondido. Continuando a la siguiente pregunta.")
+                        print("Todos los jugadores han respondido.")
                         evento_todos_respondieron.set()
                         
                 break
@@ -219,7 +231,7 @@ def manejar_cliente(cliente_socket, direccion):
         
         if(cliente_socket == clientes_conectados[0]["socket"]):
             with lock_respuestas:
-                print("Reiniciando contador...")
+                print("Continuando a la siguiente pregunta...")
                 contador_respuestas = 0
                 evento_todos_respondieron.clear()
 
